@@ -49,12 +49,36 @@ let selectedModel='gemini-3.8-flash';
 function updateModel(){selectedModel=$('model-select').value;$('model-badge').textContent='✧ Gemini · '+selectedModel;history=[];}
 $('model-select').addEventListener('change',()=>{updateModel();$('model-status').textContent='Modelo seleccionado: '+selectedModel+'. La siguiente consulta iniciará un contexto nuevo.'});
 function safeDetail(value){let text=String(value||'');if(apiKey)text=text.split(apiKey).join('[clave oculta]');return text.replace(/AIza[\w-]+|AQ\.[\w-]+/g,'[clave oculta]').slice(0,700)}
-async function apiRequest(path,options={}){
- const response=await fetch(API_ROOT+path,{...options,headers:{'Content-Type':'application/json','x-goog-api-key':apiKey}});
- const data=await response.json().catch(()=>({}));
- if(!response.ok){const hints={400:'Google ha rechazado la solicitud. Revisa el detalle y la configuración de tu clave.',401:'Google no ha aceptado la clave.',403:'Acceso denegado. Revisa los permisos y restricciones de la clave en Google AI Studio.',404:'Google no encuentra el modelo o recurso solicitado. Comprueba los modelos disponibles.',429:'Cuota o límite de solicitudes alcanzado. Revisa el proyecto y su facturación en Google AI Studio.'};const error=new Error('HTTP '+response.status+' · '+(hints[response.status]||'El servicio de Gemini no está disponible.')+(data.error?.message?' Detalle de Google: '+safeDetail(data.error.message):''));error.status=response.status;throw error}
- return data;
+function waitForRetry(ms,signal){
+ return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(new DOMException('Solicitud cancelada','AbortError'));return}
+  const abort=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(new DOMException('Solicitud cancelada','AbortError'))};
+  const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve()},ms);
+  signal?.addEventListener('abort',abort,{once:true});
+ });
 }
+async function apiRequest(path,options={}){
+ const maxRetries=3;
+ for(let attempt=0;attempt<=maxRetries;attempt++){
+  if(options.signal?.aborted)throw new DOMException('Solicitud cancelada','AbortError');
+  const response=await fetch(API_ROOT+path,{...options,headers:{'Content-Type':'application/json','x-goog-api-key':apiKey}});
+  const data=await response.json().catch(()=>({}));
+  if(response.ok)return data;
+  const transient=[408,500,502,503,504].includes(response.status);
+  const retryHeader=response.headers?.get('Retry-After');
+  const retryAfter=retryHeader?(Number.isFinite(Number(retryHeader))?Number(retryHeader)*1000:Date.parse(retryHeader)-Date.now()):0;
+  const delay=Math.max(2000*2**attempt+Math.floor(Math.random()*500),Number.isFinite(retryAfter)?retryAfter:0);
+  if(transient&&attempt<maxRetries&&delay<=15000){
+   $('chat-status').textContent='Google está temporalmente ocupado. Reintento '+(attempt+1)+' de '+maxRetries+' en '+Math.ceil(delay/1000)+' s…';
+   await waitForRetry(delay,options.signal);
+   $('chat-status').textContent='Reintentando la consulta a Gemini ('+(attempt+1)+'/'+maxRetries+')…';
+   continue;
+  }
+  const hints={400:'Google ha rechazado la solicitud. Revisa el detalle y la configuración de tu clave.',401:'Google no ha aceptado la clave.',403:'Acceso denegado. Revisa los permisos y restricciones de la clave en Google AI Studio.',404:'Google no encuentra el modelo o recurso solicitado. Comprueba los modelos disponibles.',429:'Cuota o límite de solicitudes alcanzado. Revisa el proyecto y su facturación en Google AI Studio.',503:'Gemini sigue saturado temporalmente. Tu pregunta se conserva. Espera un momento y vuelve a enviarla, o elige otro modelo en Configurar API Key.'};
+  const error=new Error('HTTP '+response.status+' · '+(hints[response.status]||'El servicio de Gemini no está disponible.')+(attempt?' Se han realizado '+(attempt+1)+' intentos.':'')+(data.error?.message?' Detalle de Google: '+safeDetail(data.error.message):''));error.status=response.status;throw error;
+ }
+}
+
 function setBusy(value){busy=value;['send','clear-chat','save-key','delete-key','check-models','model-select'].forEach(id=>$(id).disabled=value);document.querySelectorAll('.suggestions button').forEach(b=>b.disabled=value);$('question').disabled=value;$('chat-log').setAttribute('aria-busy',String(value));$('chat-status').textContent=value?'Consultando a Gemini…':'';$('send').textContent=value?'Enviando…':'Enviar'}
 function showError(error){$('chat-error').textContent=error.name==='AbortError'?'La consulta ha tardado demasiado. Puedes volver a intentarlo.':error instanceof TypeError?'No se pudo conectar con Google. Comprueba tu conexión y las restricciones del navegador.':safeDetail(error.message);$('chat-error').hidden=false}
 async function checkModels(){
