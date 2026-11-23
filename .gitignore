@@ -1,0 +1,18 @@
+# Publish only the website and final media.
+/*
+!/.gitignore
+!/index.html
+!/images/
+!/videos/
+/images/*
+!/images/rodrigo.jpg
+/videos/*
+!/videos/pitch.mp4
+!/videos/proyecto.mp4
+!/videos/habilidades.mp4
+!/videos/pitch.jpg
+!/videos/proyecto.jpg
+!/videos/habilidades.jpg
+!/videos/pitch.vtt
+!/videos/proyecto.vtt
+!/videos/habilidades.vtt
